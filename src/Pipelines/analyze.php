@@ -93,7 +93,7 @@ if (in_array("ma", $steps))
 	}
 	if (count($files1)==0)
 	{
-		trigger_error("Found no read files ending with '_R1_001.fastq.gz' or '_R2_001.fastq.gz'!", E_USER_ERROR);
+		trigger_error("Found no read files found matching '$in_for' or '$in_rev'!", E_USER_ERROR);
 	}
 	
 	$args = array();
