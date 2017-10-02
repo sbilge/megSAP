@@ -45,18 +45,49 @@ if(!is_dir($sample_folder))
 
 //check that fastq files are there
 $files = glob($sample_folder.$sample."*.fastq.gz");
-if(count($files)<2)
+if(count($files)<2 && $info['sys_type'] != "RNA")
 {
 	trigger_error("Could not find at least two FASTQ files starting with '$sample' in '$sample_folder'!", E_USER_ERROR);
 }
 
 //determine command and arguments
-if($info['project_type']=="diagnostic" && $info['is_tumor'] && $info['normal_name']!="")
+if($info['is_tumor'] && $info['normal_name']!="" && $info['sys_type'] != "RNA")
 {	
 	$outfolder = $project_folder."/Somatic_".$sample."-".$info['normal_name']."/";
 	if (!file_exists($outfolder)) mkdir($outfolder);
+	
+	//determine somatic steps
+	if (contains($steps, "ma"))
+	{
+		$steps_som = "ma,vc,an,ci,db,re";
+	}
+	else if (contains($steps, "vc"))
+	{
+		$steps_som = "vc,an,ci,db,re";
+	}
+	else
+	{
+		$steps_som = "an,ci,db,re";
+	}
+	
 	$command = "php ".repository_basedir()."/src/Pipelines/somatic_capa.php";
-	$args = "-p_folder {$project_folder} -t_id {$sample} -n_id ".$info['normal_name']." -o_folder {$outfolder} --log {$outfolder}somatic_capa_".date("Ymdhis").".log";
+	$args = "-p_folder {$project_folder} -t_id {$sample} -n_id ".$info['normal_name']." -o_folder {$outfolder} -steps {$steps_som} --log {$outfolder}somatic_capa_".date("Ymdhis").".log";
+}
+elseif ($info['sys_type'] == "RNA")
+{
+	$command = "php ".repository_basedir()."/src/Pipelines/analyze_rna.php";
+	
+	//if steps argument is default, replace with analyze_rna default value
+	if ($steps == "ma,vc,an,db,cn")
+	{
+		$steps = "ma,rc,an,fu,db";
+	}
+	else
+	{
+		//reduce to valid steps for analyze_rna
+		$steps = implode(",", array_intersect(explode(",", $steps), explode(",", "ma,rc,an,fu,db")));
+	}
+	$args = "-folder {$sample_folder} -name {$sample} -steps {$steps} --log {$sample_folder}analyze_rna_".date("Ymdhis").".log";
 }
 else
 {
@@ -74,6 +105,11 @@ if($high_priority)
 {
 	$queues = array_merge($queues, explode(",", get_path("queues_high_priority")));
 }
+elseif ($info['sys_type']=="RNA")
+{
+	$queues = explode(",", get_path("queues_high_mem"));
+}
+
 $sample_status = get_path("sample_status_folder")."/data/";
 $slots = $info['sys_type']=="WGS" ? "-pe smp 2" : ""; //use two instead of one slots for WGS
 

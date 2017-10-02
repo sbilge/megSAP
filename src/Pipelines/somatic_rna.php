@@ -2,8 +2,6 @@
 
 /*
 	@page somatic_pair_rna
- 
-	@todo update old fastq handling
  */
 
 $basedir = dirname($_SERVER['SCRIPT_FILENAME'])."/../";
@@ -22,7 +20,7 @@ $parser->addString("t_folder", "Folder where original tumor fastq files can be f
 $parser->addString("n_folder", "Folder where original normal fastq files can be found.", true, "na");
 $parser->addInfile("t_sys",  "Tumor processing system INI file (determined from 't_id' by default).", true);
 $parser->addInfile("n_sys",  "Reference processing system INI file (determined from 'n_id' by default).", true);
-$steps_all = array("ma","fu","vc","an","db");
+$steps_all = array("ma","rc","fu","vc","an","db");
 $parser->addString("steps", "Comma-separated list of processing steps to perform. (".implode(",",$steps_all).")", true, implode(",", array_slice($steps_all,1)));
 $parser->addFlag("nsc", "No sample correlation check.");
 extract($parser->parse($argv));
@@ -41,7 +39,7 @@ foreach($steps as $step)
 if($n_id=="na")
 {
 	$tumor_only = true;
-	$available_steps = array("fastq","ma","db");
+	$available_steps = array("ma","db");
 	$steps = array_intersect($available_steps,$steps);
 }
 //$steps_perf = array_slice($steps_all, $start_index, $end_index-$start_index+1);
@@ -76,46 +74,35 @@ if(!$tumor_only)
 if(!$tumor_only && $t_sys_ini['name_short'] != $n_sys_ini['name_short']) trigger_error ("System tumor '".$t_sys_ini['name_short']."' and system reference '".$n_sys_ini['name_short']."' are different!", E_USER_WARNING);
 if(!$tumor_only && $t_sys_ini['build'] != $n_sys_ini['build']) trigger_error ("System tumor '".$t_sys_ini['build']."' and system reference '".$n_sys_ini['build']."' do have different builds!", E_USER_ERROR);
 
-// (0) set RNA fastq files
-$t_forward = $o_folder_tum.$t_id."_*_R1_001.fastq.gz";
-$t_reverse = $o_folder_tum.$t_id."_*_R2_001.fastq.gz";
-if(is_valid_processingid($t_id))
-{
-	list($s_id,$p_id) = explode("_",$t_id);
-	$t_forward = $o_folder_tum.$s_id."_*_R1_001.fastq.gz";
-	$t_reverse = $o_folder_tum.$s_id."_*_R2_001.fastq.gz";
-}
-$n_forward = $o_folder_ref.$n_id."_*_R1_001.fastq.gz";
-$n_reverse = $o_folder_ref.$n_id."_*_R2_001.fastq.gz";
-if(is_valid_processingid($n_id))
-{
-	list($s_id,$p_id) = explode("_",$n_id);
-	$n_forward = $o_folder_ref.$s_id."_*_R1_001.fastq.gz";
-	$n_reverse = $o_folder_ref.$s_id."_*_R2_001.fastq.gz";
-}
-
 // (1) map reference and tumor sample
 $tum_bam = $o_folder_tum.$t_id.".bam";
 $ref_bam = $o_folder_ref.$n_id.".bam";
-$tum_counts = $o_folder_tum.$t_id."_counts_fpkm.tsv";
-$ref_counts = $o_folder_ref.$n_id."_counts_fpkm.tsv";
+$tum_counts = $o_folder_tum.$t_id."_counts.tsv";
+$ref_counts = $o_folder_ref.$n_id."_counts.tsv";
 if(in_array("ma", $steps))
 {	
 	//map tumor and normal in high-mem-queue
 	$args = "-steps ma,rc,fu,an";
 	$working_directory = realpath($p_folder);
-	$commands = array("php ".$basedir."Pipelines/analyze_rna.php -in_for $t_forward -in_rev $t_reverse -system $t_sys -out_folder ".$o_folder_tum." -out_name $t_id $args --log ".$o_folder_tum."analyze_".date('YmdHis',mktime()).".log");
-	if(!$tumor_only)	$commands[] = "php ".$basedir."Pipelines/analyze_rna.php -in_for $n_forward -in_rev $n_reverse -system $n_sys -out_folder ".$o_folder_ref." -out_name $n_id $args --log ".$o_folder_ref."analyze_".date('YmdHis',mktime()).".log";
+	
+	//analyze tumor RNA
+	$commands = array("php {$basedir}Pipelines/analyze_rna.php -folder {$o_folder_tum} -system {$t_sys} -name {$t_id} {$args} --log {$o_folder_tum}analyze_".date('YmdHis',mktime()).".log");
+	
+	//analyze normal RNA
+	if(!$tumor_only)	$commands[] = "php {$basedir}Pipelines/analyze_rna.php -folder {$n_folder} -system {$n_sys} -name {$n_id} {$args} --log {$o_folder_ref}analyze_".date('YmdHis',mktime()).".log";
 	$parser->jobsSubmit($commands, $working_directory, get_path("queues_high_mem"), true);
 }
 
 // only for tumor-normal pairs
 if(!$tumor_only)
 {
-	// calculate counts tumor, normal and somatic fold change
-	$som_counts = $o_folder.$t_id."-".$n_id."_counts_fpkm.tsv";
-	if(!$tumor_only)	$parser->execTool("NGS/rc_compare.php", "-in1 $tum_counts -in2 $ref_counts -out $som_counts");
-
+	$som_counts = $o_folder.$t_id."-".$n_id."_counts.tsv";
+	if(in_array("rc", $steps))
+	{
+		// calculate counts tumor, normal and somatic fold change
+		if(!$tumor_only)	$parser->execTool("NGS/rc_compare.php", "-in1 $tum_counts -in2 $ref_counts -out $som_counts");
+	}
+	
 	// (2) check that samples are related
 	if(!$nsc)
 	{
@@ -167,7 +154,7 @@ if(!$tumor_only)
 		// (3a) variant calling
 		$args = "";
 		if (!$t_sys_ini['shotgun']) $args .= "-amplicon ";
-		$parser->execTool("NGS/vc_strelka.php", "-t_bam $tum_bam -n_bam $ref_bam -out $som_v $args");
+		$parser->execTool("NGS/vc_strelka2.php", "-t_bam $tum_bam -n_bam $ref_bam -out $som_v $args");
 	}
 
 
@@ -232,8 +219,8 @@ if (in_array("db", $steps))
 			//import QC data normal
 			$log_db  = $n_folder."/".$n_id."_log4_db.log";
 			$qc_fastq  = $n_folder."/".$n_id."_stats_fastq.qcML";
-			$qc_map  = $n_folder."/".$n_id."_stats_map.qcML";	//MappingQC does currently not support RNA
-			$parser->execTool("NGS/db_import_qc.php","-id $n_id -files $qc_fastq -force -min_depth 0 --log $log_db");
+			$qc_map  = $n_folder."/".$n_id."_stats_map.qcML";
+			$parser->execTool("NGS/db_import_qc.php","-id $n_id -files $qc_fastq $qc_map -force -min_depth 0 --log $log_db");
 
 			//update last_analysis date
 			updateLastAnalysisDate($n_id, $ref_bam);

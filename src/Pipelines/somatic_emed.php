@@ -67,7 +67,7 @@ if(count($tmp_steps=array_intersect($available_steps,$steps))>0 && !$rna_only)
 {
 	// somatic_dna pipelne starts with map and ends with db
 	$args = "-t_sys $t_dna_sys_file -n_sys $n_dna_sys_file -steps ".implode(",",$tmp_steps)." ";
-	$args .= "-filter_set non_coding_splicing,off_target,set_somatic ";
+	$args .= "-filter_set not-coding-splicing ";
 	$args .= "-min_af 0.05 --log ".$o_folder."somatic_emed_dna_".date('YmdHis',mktime()).".log ";
 	if($freebayes)	$args .= "-freebayes ";
 	$parser->execTool("Pipelines/somatic_dna.php", "-p_folder $p_folder -t_id $t_dna_id -n_id $n_dna_id -o_folder $o_folder $args");
@@ -130,12 +130,9 @@ if(in_array("co", $steps))
 		$parser->exec("tabix", "-fp vcf $s_dna_vcf", false);	// no output logging, because Toolbase::extractVersion() does not return
 	}
 
-	// (3) determine tumor content
-	$parser->exec(get_path("ngs-bits")."EstimateTumorContent", "-tu $s_dna_ann -tu_bam ".$t_dna_bam." -no_bam ".$n_dna_bam, true);
-	
+	// (4) germline variants ADME genes
 	if(!$no_germline)
 	{
-		// (4) germline variants ADME genes
 		$target_adme = "/mnt/projects/research/eMed-HCC/+IKP/ADME_Genes_hg19_eMED_20161206.bed";
 		$tmp_folder = $parser->tempFolder("analyze");
 		$adme_vcffile = $tmp_folder."/".$n_dna_id.".vcf.gz";

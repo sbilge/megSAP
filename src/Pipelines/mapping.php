@@ -50,16 +50,26 @@ if ($sys["adapter1_p5"]=="" && $sys["adapter2_p7"]=="")
 {
 	trigger_error("No forward and/or reverse adapter sequence given!\nForward: ".$sys["adapter1_p5"]."\nReverse: ".$sys["adapter2_p7"], E_USER_ERROR);
 }
+
+$stafile1 = $basename."_stats_fastq.qcML";
 $trimmed1 = $parser->tempFile("_trimmed1.fastq.gz");
 $trimmed2 = $parser->tempFile("_trimmed2.fastq.gz");
-$stafile1 = $basename."_stats_fastq.qcML";
-$parser->exec(get_path("ngs-bits")."SeqPurge", "-in1 ".implode(" ", $in_for)." -in2 ".implode(" ", $in_rev)." -out1 $trimmed1 -out2 $trimmed2 -a1 ".$sys["adapter1_p5"]." -a2 ".$sys["adapter2_p7"]." -qc $stafile1 -threads ".($threads>2 ? 2 : 1), true);
+if(strpos($sys['name_manufacturer'],"ThruPlex TagSeq")===FALSE)
+{
+	$parser->exec(get_path("ngs-bits")."SeqPurge", "-in1 ".implode(" ", $in_for)." -in2 ".implode(" ", $in_rev)." -out1 $trimmed1 -out2 $trimmed2 -a1 ".$sys["adapter1_p5"]." -a2 ".$sys["adapter2_p7"]." -qc $stafile1 -threads ".($threads>2 ? 2 : 1), true);	
+}
+else
+{	
+	$parser->exec("cat", implode(" ", $in_for)." > ".$trimmed1, true);
+	$parser->exec("cat", implode(" ", $in_rev)." > ".$trimmed2, true);
+	$parser->exec(get_path("ngs-bits")."ReadQC", "-in1 $trimmed1 -in2 $trimmed2 -out $stafile1", true);	
+}
 
 // MIPs: move molecular barcode to separate file
 $index_file = $basename."_index.fastq.gz";
+$trimmed_mips2 = $basename."_MB_001.fastq.gz";
 if($sys['type']=="Panel MIPs")
 {
-	$trimmed_mips2 = $parser->tempFile("_mips_indices.fastq.gz"); ///@todo rename to [sample]_MB_001.fastq.gz and store to sample folder
 	$parser->exec(get_path("ngs-bits")."FastqExtractBarcode", "-in $trimmed2 -out_main $trimmed_mips2 -cut 8 -out_index $index_file",true);
 	$trimmed2 = $trimmed_mips2;
 }
@@ -98,6 +108,19 @@ $mapping_options = "";
 if ($sys['shotgun']) $mapping_options .= " -dedup";
 $parser->execTool("NGS/mapping_bwa.php", "-in1 $trimmed1 -in2 $trimmed2 -out $out $mapping_options -build ".$sys['build']." -threads ".$threads);
 
+if(strpos($sys['name_manufacturer'],"ThruPlex TagSeq")===0)
+{
+	$tmp_conner = $parser->tempFile("_conner_dedup.bam");
+	$parser->exec("python /mnt/share/opt/Connor-0.5/connor-runner.py", "$out $tmp_conner",true,"0.5");
+	
+	$bam_before_dedup =  basename($out,".bam")."_before_dedup.bam";
+	copy2($out, $bam_before_dedup);
+	$parser->exec(get_path("samtools"), "index ".$bam_before_dedup, true);
+	
+	copy2($tmp_conner, $out);
+	$parser->exec(get_path("samtools"), "index ".$bam_before_dedup, true);
+}
+
 //perform indel realignment
 if (!$no_abra && ($sys['target_file']!="" || $sys['type']=="WGS"))
 {
@@ -108,13 +131,13 @@ if (!$no_abra && ($sys['target_file']!="" || $sys['type']=="WGS"))
 	$args[] = "-out $tmp_bam";
 	$args[] = "-build ".$sys['build'];
 	$args[] = "-threads ".$threads;
-	if ($sys['target_file']!="")
-	{
-		$args[] = "-roi ".$sys['target_file'];
-	}
-	else if ($sys['type']=="WGS") //for WGS use exome target region
+	if ($sys['type']=="WGS") //for WGS use exome target region
 	{
 		$args[] = "-roi ".get_path("data_folder")."/enrichment/ssHAEv6_2017_01_05.bed";
+	}
+	else if ($sys['target_file']!="")
+	{
+		$args[] = "-roi ".$sys['target_file'];
 	}
 	
 	$parser->execTool("NGS/indel_realign_abra.php", implode(" ", $args));
@@ -148,7 +171,13 @@ if($sys['type']=="Panel MIPs")
 {
 	$mip_file = isset($sys['mip_file']) ? $sys['mip_file'] : "/mnt/share/data/mipfiles/".$sys["name_short"].".txt";
 	$bam_dedup1 = $parser->tempFile("_dedup1.bam");
-	$parser->exec(get_path("ngs-bits")."BamDeduplicateByBarcode", " -bam $out -index $index_file -mip_file $mip_file -out $bam_dedup1 -del_amb -stats ".$basename."_bar_stats.tsv -dist 1", true);
+	// removed: 
+	$bam_before_dedup =  basename($out, ".bam")."_before_dedup.bam";
+	copy2($out, $bam_before_dedup);
+	$parser->exec(get_path("samtools"), "index ".$bam_before_dedup, true);
+
+	$parser->exec(get_path("ngs-bits")."BamDeduplicateByBarcode", " -bam $out -index $index_file -mip_file $mip_file -out $bam_dedup1 -stats ".$basename."_bar_stats.tsv -del_amb  -dist 1", true);
+
 	$tmp1 = $parser->tempFile();
 	$parser->exec(get_path("samtools"),"sort -T $bam_dedup1 -o $out $bam_dedup1", true);
 	$parser->exec(get_path("samtools")." index", " $out", true);
@@ -182,6 +211,10 @@ else
 if ($sys['build']=="hg19" || $sys['build']=="GRCh37")
 {
 	$params[] = "-3exons";
+}
+else
+{
+	$params[] = "-no_cont";
 }
 
 $parser->exec(get_path("ngs-bits")."MappingQC", "-in $out -out $stafile2 ".implode(" ", $params), true);

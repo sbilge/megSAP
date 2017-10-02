@@ -98,46 +98,35 @@ function txt2geno($snps, $in_file, $out_file)
 
 //returns the genotype(s) for a sample at a certain position, or 'n/a' if the minimum depth was not reached.
 function ngs_geno($bam, $chr, $pos, $ref, $min_depth)
-{
-	$debug = false;
-	if ($debug) print "$bam\n$chr $pos $ref $min_depth\n";
+{	
+	//get pileup
+	list($output) = exec2(get_path("samtools")." mpileup -aa -r $chr:$pos-$pos $bam");
+	list($chr2, $pos2, $ref2, , $bases) = explode("\t", $output[0]);;
+	
+	//count bases
+	$bases = strtoupper($bases);
+	$counts = array("A"=>0, "C"=>0, "G"=>0, "T"=>0);
+	for($i=0; $i<strlen($bases); ++$i)
+	{
+		$char = $bases[$i];
+		if (isset($counts[$char]))
+		{
+			++$counts[$char];
+		}
+	}
+	arsort($counts);
 	
 	//check depth
-	list($output) = exec2(get_path("samtools")." depth -r $chr:$pos-$pos $bam");
-	if (count($output)!=1) trigger_error("Could determine depth at $chr:$pos-$pos in $bam", E_USER_ERROR);
-	if (trim($output[0])=="") return "n/a";
-	list(, , $depth) = explode("\t", $output[0]);
-	if ($debug) print "depth: $depth\n";
-	if ($depth<$min_depth) return "n/a";
+	$keys = array_keys($counts);
+	$c1 = $counts[$keys[0]];
+	$c2 = $counts[$keys[1]];
+	if ($c1+$c2<$min_depth) return "n/a";
 	
-	//call variants
-	$vc_cmd = get_path("freebayes")." -b $bam -f ".get_path("local_data")."/GRCh37.fa -r $chr:".($pos-2)."-".($pos);
-	if ($debug) print $vc_cmd."\n";
-	list($output) = exec2($vc_cmd);
-	foreach($output as $o)
-	{
-		if (starts_with($o, "#")) continue;
-		if (!starts_with($o, "$chr\t$pos\t.\t$ref\t")) continue;
-		
-		list(, , , , $obs, , , , $format, $sample) = explode("\t", trim($o));
-		
-		if ($debug) print "$obs $format $sample\n";
+	//determine genotype
+	$b1 = $keys[0];
+	$b2 = ($c2>3 && $c2/($c1+$c2)>0.1) ? $keys[1] : $keys[0];
 	
-		//extract genotype
-		$tmp = explode(":", trim($format));
-		$gt_index = array_search("GT", $tmp);
-		if ($gt_index===false)
-		{
-			trigger_error("Could not find find GT column index: $format $sample", E_USER_ERROR);
-		}
-		$tmp = explode(":", trim($sample));
-		$geno = $tmp[$gt_index];
-		
-		return strtr($geno, array("0"=>$ref, "1"=>$obs));
-	}
-	
-	//no call => ref
-	return "$ref/$ref";
+	return "$b1/$b2";
 }
 
 //imports the result into NGSD
@@ -257,6 +246,7 @@ foreach($file as $line)
 				//print "  SNP: ".$snp[1].":".$snp[2]." ".$snp[3].">".$snp[4]."\n";
 				//print "  KASP: $g\n";
 				$g2 = ngs_geno($bam, $snp[1], $snp[2], $snp[3], $min_depth);
+
 				if ($g2=="n/a") continue;
 				++$c_both;
 				//print "  NGS: $g2\n";

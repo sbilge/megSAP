@@ -53,7 +53,7 @@ if (count($jobs)!=1)
 	print "##=    > sudo su bioinf                                         =\n";
 	print "##=    > /mnt/share/to_qbic/datamover.sh start                  =\n";
 	print "##===============================================================\n";
-	die;
+	die(1);
 }
 
 //print documentation
@@ -470,7 +470,7 @@ foreach($res as $row)
 			if (ends_with($file, ".fastq.gz")) $files[] = $file;
 			if (ends_with($file, "_var_annotated.vcf.gz")) $files[] = $file;
 			if (ends_with($file, "_counts_raw.tsv")) $files[] = $file;
-			if (ends_with($file, "_counts_fpkm.tsv")) $files[] = $file;
+			if (ends_with($file, "_counts.tsv")) $files[] = $file;
 		}
 		
 		//skip already uploaded
@@ -580,7 +580,7 @@ foreach($res as $row)
 			}
 			else
 			{
-				$pattern = "{$data_folder}/{{$ps_name}-{$ps_name2}*_var_annotated.vcf.gz,{$ps_name}-{$ps_name2}*.GSvar,{$ps_name2}*_var_annotated.vcf.gz,{$ps_name2}*.GSvar,*_counts_fpkm.tsv,*_var_fusions.tsv}";
+				$pattern = "{$data_folder}/{{$ps_name}-{$ps_name2}*_var_annotated.vcf.gz,{$ps_name}-{$ps_name2}*.GSvar,{$ps_name2}*_var_annotated.vcf.gz,{$ps_name2}*.GSvar,*_counts.tsv,*_var_fusions.tsv}";
 			}
 			
 			$files = glob($pattern, GLOB_BRACE);

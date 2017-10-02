@@ -33,6 +33,7 @@ $parser->addString("steps", "Comma-separated list of processing steps to perform
 $parser->addFlag("rna_only", "Process only RNA.", true);
 $parser->addFlag("dna_only", "Process only DNA.", true);
 $parser->addFlag("smn_dna", "Skip mapping of DNA normal sample (was done previously).", true);
+$parser->addFlag("smt_dna", "Skip mapping of DNA tumor sample (was done previously).", true);
 $parser->addFlag("freebayes", "Use freebayes for variant detection (default: strelka).", true);
 $parser->addFloat("contamination", "Indicates fraction of tumor cells in normal sample. Freebayes is used for variant calling in contaminated normal samples.", true, 0);
 $parser->addFlag("nsc", "Skip sample correlation check.");
@@ -70,12 +71,13 @@ if(count($tmp_steps=array_intersect($available_steps,$steps))>0 && !$rna_only)
 {
 	$args = "-t_sys $t_dna_sys_file -n_sys $n_dna_sys_file ";
 	$args .= "-steps ".implode(",",$tmp_steps)." -min_af 0.05 ";
-	$args .= "-filter_set non_coding_splicing,synonymous,set_somatic,off_target ";
+	$args .= "-filter_set not-coding-splicing,synonymous ";
 	$args .= "--log ".$o_folder_dna."somatic_ivac_dna_".date('YmdHis',mktime()).".log ";
 	if($amplicon)	$args .= "-amplicon ";
 	if($no_softclip)	$args .= "-no_softclip ";
 	if($freebayes)	$args .= "-freebayes ";
 	if($smn_dna)	$args .= "-smn ";
+	if($smt_dna)	$args .= "-smt ";
 	if($nsc)	$args .= "-nsc ";
 	if($contamination > 0)	$args .= "-contamination $contamination ";
 	if(!is_dir($o_folder_dna))	mkdir($o_folder_dna, 0775, true);
@@ -122,31 +124,24 @@ if($rna>0 && !$nsc)
 }
 
 // (3) combine results of DNA / RNA
-if(in_array("co", $steps))
+if(in_array("co", $steps) && $rna!=0)
 {
-	// (3a) annotate RNA 
-	if ($rna!=0)
+	$tmp = $parser->tempFile(".vcf");
+	$vaf_options = " -depth";
+	$tum_rna_bam = $p_folder."/Sample_".$t_rna_id."/".$t_rna_id.".bam";
+	
+	$parser->exec("bgzip", "-dc $som_vcf > $tmp", false);	// no output logging, because Toolbase::extractVersion() does not return
+	$parser->exec(get_path("ngs-bits")."VariantAnnotateFrequency", "-in $tmp -bam $tum_rna_bam -out $tmp -name rna_tum $vaf_options", true);
+	$parser->exec(get_path("ngs-bits")."VariantAnnotateFrequency", "-in $annotated -bam $tum_rna_bam -out $annotated -name rna_tum $vaf_options", true);
+	if ($rna==2)
 	{
-		$tmp = $parser->tempFile(".vcf");
-		$vaf_options = " -depth";
-		$tum_rna_bam = $p_folder."/Sample_".$t_rna_id."/".$t_rna_id.".bam";
-		
-		$parser->exec("bgzip", "-dc $som_vcf > $tmp", false);	// no output logging, because Toolbase::extractVersion() does not return
-		$parser->exec(get_path("ngs-bits")."VariantAnnotateFrequency", "-in $tmp -bam $tum_rna_bam -out $tmp -name rna_tum $vaf_options", true);
-		$parser->exec(get_path("ngs-bits")."VariantAnnotateFrequency", "-in $annotated -bam $tum_rna_bam -out $annotated -name rna_tum $vaf_options", true);
-		if ($rna==2)
-		{
-			$ref_rna_bam = $p_folder."/Sample_".$n_rna_id."/".$n_rna_id.".bam";
-			$parser->exec(get_path("ngs-bits")."VariantAnnotateFrequency", "-in $tmp -bam $ref_rna_bam -out $tmp -name rna_ref $vaf_options", true);
-			$parser->exec(get_path("ngs-bits")."VariantAnnotateFrequency", "-in $annotated -bam $ref_rna_bam -out $annotated -name rna_ref $vaf_options", true);
-		}
-		
-		$parser->exec("bgzip", "-cf $tmp > $som_vcf", false);	// no output logging, because Toolbase::extractVersion() does not return
-		$parser->exec("tabix", "-fp vcf $som_vcf", false);	// no output logging, because Toolbase::extractVersion() does not return
+		$ref_rna_bam = $p_folder."/Sample_".$n_rna_id."/".$n_rna_id.".bam";
+		$parser->exec(get_path("ngs-bits")."VariantAnnotateFrequency", "-in $tmp -bam $ref_rna_bam -out $tmp -name rna_ref $vaf_options", true);
+		$parser->exec(get_path("ngs-bits")."VariantAnnotateFrequency", "-in $annotated -bam $ref_rna_bam -out $annotated -name rna_ref $vaf_options", true);
 	}
-
-	// (3b) determine tumor content
-	$parser->exec(get_path("ngs-bits")."EstimateTumorContent", "-tu $annotated -tu_bam ".$t_dna_bam." -no_bam ".$n_dna_bam, true);
+	
+	$parser->exec("bgzip", "-cf $tmp > $som_vcf", false);	// no output logging, because Toolbase::extractVersion() does not return
+	$parser->exec("tabix", "-fp vcf $som_vcf", false);	// no output logging, because Toolbase::extractVersion() does not return
 }
 
 // (4) identify if germline variants are close to somatic variants

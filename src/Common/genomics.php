@@ -623,14 +623,18 @@ function get_qc_from_ngsd($processing_id, $qc_id, $qc_name=null)
 /*
 	@brief parse qcml file and return qc value depending on qc_id
  */
-function get_qc_from_qcml($qcml_file, $qc_id, $qc_name=null)
+function get_qc_from_qcml($qcml_file, $qc_id, $qc_name=null, $error=true)
 {
 	$xml = simplexml_load_file($qcml_file);
 	$xml->registerXPathNamespace('q', 'http://www.prime-xs.eu/ms/qcml');
 	$match = $xml->xpath("//q:qualityParameter[@accession='".$qc_id."']");
 
 	if(count($match)>1)	trigger_error("Multiple occurrences of '".$qc_id."' was found in qcml file '".$qcml_file."'!", E_USER_ERROR);
-	if(count($match)==0)	return false;
+	if(count($match)==0)
+	{
+		if(!$error)	return null;
+		else	trigger_error("Could not find QC value with QC-ID ".$qc_id,E_USER_ERROR);
+	}
 	if(!empty($qc_name) && $qc_name!=$match[0]->attributes()->{'name'})	trigger_error("QC name extracted from qcml file '".$match[0]->attributes()->{'name'}."' does not match expected qcml name '".$qc_name."' in ".$qcml_file."'!", E_USER_ERROR);
 	return (string)$match[0]->attributes()->{'value'};
 }
@@ -1102,6 +1106,7 @@ function load_vcf_normalized($filename)
 	$vars = array();
 	
 	//load and normalize data
+	if(!is_file($filename))	trigger_error("Could not find file $filename.",E_USER_WARNING);
 	$file = file($filename);
 	foreach($file as $line)
 	{
@@ -1227,8 +1232,8 @@ function vcf_strelka_snv($format_col, $sample_col, $obs)
 	else if($obs == "G") $o = $gu;
 	else	trigger_error("Alternative allele '$obs' unknown.",E_USER_WARNING);	// unknown alleles are 'A,G', '.'
 
-	if($sum==0)	return array($d,null);
-	$f = number_format($o/$sum,4);
+	$f = 0;
+	if($sum!=0)	$f = number_format($o/$sum,4);
 
 	return array($d,$f);
 }
@@ -1247,7 +1252,7 @@ function vcf_strelka_indel($format_col, $sample_col)
 	list($tar,) = explode(",", explode(":",$sample_col)[$index_TAR]);
 
 	//tir and tar contain strong supportin reads, tor (not considered here) contains weak supportin reads like breakpoints
-	//only strong supporting reads are used for filtering
+	//only strong supporting reads are used for calculation of allele fraction
 	$f = 0;
 	if(($tir+$tar) != 0)	$f = number_format($tir/($tir+$tar),4);
 	
@@ -1270,6 +1275,25 @@ function vcf_freebayes($format_col, $sample_col)
 	$d = explode(":",$sample_col)[$index_DP];
 	$f = null;
 	if($d>0)	$f = number_format(explode(":",$sample_col)[$index_AO]/$d, 4);
+	return array($d,$f);
+}
+
+function vcf_iontorrent($format_col, $sample_col, $idx_al)
+{
+	$g = explode(":",$format_col);
+	$index_DP = NULL;
+	$index_AF = NULL;
+	for($i=0;$i<count($g);++$i)
+	{
+		if($g[$i]=="DP")	$index_DP = $i;
+		if($g[$i]=="AF")	$index_AF = $i;
+	}
+
+	if(is_null($index_DP) || is_null($index_AF))	trigger_error("Invalid iontorrent format; either field DP or AF not available.",E_USER_ERROR);
+	
+	$d = explode(":",$sample_col)[$index_DP];
+	$f = number_format(explode(",",explode(":",$sample_col)[$index_AF])[$idx_al], 4);
+
 	return array($d,$f);
 }
 
