@@ -397,9 +397,23 @@ else
 		// run somatic QC; this is run before project specific filtering since some qc parameters should not have additional filters set
 		$t_bam = $t_folder.$t_id.".bam";
 		$n_bam = $n_folder.$n_id.".bam";
-		$links = array($t_folder.$t_id."_stats_fastq.qcML",$t_folder.$t_id."_stats_map.qcML",$n_folder.$n_id."_stats_fastq.qcML",$n_folder.$n_id."_stats_map.qcML");
-		$stafile3 = $o_folder.$t_id."-".$n_id."_stats_som.qcML";
-		$parser->exec(get_path("ngs-bits")."SomaticQC","-tumor_bam $t_bam -normal_bam $n_bam -links ".implode(" ",$links)." -somatic_vcf $som_unfi -target_bed ".$t_sys_ini['target_file']." -ref_fasta ".get_path("local_data")."/".$t_sys_ini['build'].".fa -out $stafile3",true);
+		$args = [
+			"-tumor_bam $t_bam",
+			"-normal_bam $n_bam",
+			"-somatic_vcf $som_unfi",
+			"-target_bed ".$t_sys_ini['target_file'],
+			"-ref_fasta ".get_path("local_data")."/".$t_sys_ini['build'].".fa",
+			"-out ".$o_folder.$t_id."-".$n_id."_stats_som.qcML"
+			];
+				
+		$links = array_filter([
+			$t_folder.$t_id."_stats_fastq.qcML",
+			$t_folder.$t_id."_stats_map.qcML",
+			$n_folder.$n_id."_stats_fastq.qcML",
+			$n_folder.$n_id."_stats_map.qcML"]
+			, "file_exists");
+		if (count($links)>0) $args[] = "-links ".implode($links);
+		$parser->exec(get_path("ngs-bits")."SomaticQC", implode(" ", $args),true);
 
 		// add project specific filters
 		$extra = array();
