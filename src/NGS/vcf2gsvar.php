@@ -10,6 +10,7 @@ error_reporting(E_ERROR | E_WARNING | E_PARSE | E_NOTICE);
 $parser = new ToolBase("vcf2gsvar", "Converts an annotated VCF file from freebayes to a GSvar file.");
 $parser->addInfile("in",  "Input file in VCF format.", false);
 $parser->addOutfile("out", "Output file in GSvar format.", false);
+$parser->addString("build", "The genome build to use.", false);
 //optional
 $parser->addFlag("multi", "Enable multi-sample mode.");
 extract($parser->parse($argv));
@@ -62,7 +63,7 @@ function all_genes_blacklisted($genes)
 	static $blacklist = null;
 	if ($blacklist === null)
 	{
-		$file = file(get_path("data_folder")."/gene_lists/blacklist.tsv");
+		$file = file(repository_basedir()."/data/gene_lists/blacklist.tsv");
 		foreach($file as $line)
 		{
 			$line = trim($line);
@@ -113,7 +114,7 @@ function write_header_line($handle, $column_desc, $filter_desc)
 //write column descriptions
 $column_desc = array(
 	array("filter", "Annotations for filtering and ranking variants."),
-	array("quality", "Quality parameters - SNP quality (QUAL), depth (DP), allele frequency (AF), mean mapping quality of alternate allele (MQM), genotype, depth and allele frequency for child, mother and father (TRIO)."),
+	array("quality", "Quality parameters - SNP quality (QUAL), depth (DP), allele frequency (AF), mean mapping quality of alternate allele (MQM)."),
 	array("gene", "Affected gene list (comma-separated)."),
 	array("variant_type", "Variant type."),
 	array("coding_and_splicing", "Coding and splicing details (Gene, ENST number, type, impact, exon number, HGVS.c, HGVS.p)."),
@@ -146,6 +147,7 @@ $filter_desc = array(
 	array("low_MQM", "Mean mapping quality of alternate allele less than Q50."),
 	array("low_QUAL", "Variant quality less than Q30."),
 	array("pred_pathogenic", "Variant predicted to be pathogenic by one or more tools (conservation or effect prediction)."),
+	array("pred_pathogenic_3", "Variant predicted to be pathogenic by three or more tools (conservation or effect prediction)."),
 	array("gene_blacklist", "The gene(s) are contained on the blacklist of unreliable genes."),
 	array("anno_pathogenic_clinvar", "Variant annotated to be pathogenic by ClinVar."),
 	array("anno_pathogenic_hgmd", "Variant annotated to be pathogenic by HGMD."),
@@ -155,12 +157,19 @@ $filter_desc = array(
 
 //load gencode basic transcripts
 $gencode_basic = array();
-$file = file(get_path("data_folder")."/dbs/Ensembl/gencode_basic.txt");
-foreach($file as $line)
+if ($build=="GRCh37")
 {
-	$line = trim($line);
-	if ($line=="" || $line[0]=="#") continue;
-	$gencode_basic[$line] = true;
+	$file = file(repository_basedir()."/data/dbs/Ensembl/gencode_basic.txt");
+	foreach($file as $line)
+	{
+		$line = trim($line);
+		if ($line=="" || $line[0]=="#") continue;
+		$gencode_basic[$line] = true;
+	}
+}
+else
+{
+	trigger_error("No gencode basic transcripts available for genome '$build', skipping the gencode basic filter.", E_USER_WARNING);
 }
 
 //parse input
@@ -256,27 +265,32 @@ while(!feof($handle))
 			trigger_error("VCF sample column does not contain MULTI value!", E_USER_ERROR);
 		}
 		
-		//extract genotype/depth info
+		//extract GT/DP/AO info
 		$tmp = array();
 		$tmp2 = array();
+		$tmp3 = array();
 		$parts = explode(",", $sample["MULTI"]);
 		foreach($parts as $part)
 		{
-			list($name, $gt, $dp) = explode("=", strtr($part, "|", "="));
+			list($name, $gt, $dp, $ao) = explode("=", strtr($part, "|", "=")."=");
 			$tmp[$name] = $gt;
 			$tmp2[$name] = $dp;
+			$tmp3[$name] = $ao;
 		}
 		
-		//recombine GT/DP in the correct order
+		//recombine GT/DP/AO in the correct order
 		$genotype = array();
 		$depth = array();
+		$ao = array();
 		foreach($multi_cols as $col)
 		{
 			$genotype[] = $tmp[$col];
 			$depth[] = $tmp2[$col];
+			$ao[] = $tmp3[$col];
 		}
 		$genotype = implode("\t", $genotype);
 		$sample["DP"] = implode(",", $depth);
+		$sample["AO"] = implode(",", $ao);
 	}
 	else
 	{
@@ -305,24 +319,26 @@ while(!feof($handle))
 	}
 	if (isset($sample["AO"]) && isset($sample["DP"]))
 	{
-		//@todo check regularly if this bug is fixed in vcflib. Example: NA12878_03 chr2:215632255 (AF~0.5) and chr2:215632256 (AF~1.0)
-		/* 
-		if (contains($sample["AO"], ",")) 
+		//comma-separated values in case of multi-sample data
+		$afs = array();
+		$aos = explode(",", $sample["AO"]);
+		$dps = explode(",", $sample["DP"]);
+		for($i=0; $i<count($dps); ++$i)
 		{
-			$sample["AO"] = array_sum(explode(",", $sample["AO"]));
+			if (is_numeric($aos[$i]) && is_numeric($dps[$i]))
+			{
+				$afs[] = number_format($aos[$i]/$dps[$i], 2);
+			}
 		}
-		$quality[] = "AF=".number_format(min(1.0, $sample["AO"]/$sample["DP"]), 2);
-		*/
-		$quality[] = "AF=".number_format($sample["AO"]/$sample["DP"], 2);
+		if (count($afs)>0)
+		{
+			$quality[] = "AF=".implode(",", $afs);
+		}
 	}
 	if (isset($info["MQM"])) 
 	{
 		$quality[] = "MQM=".intval($info["MQM"]);
 		if ($info["MQM"]<50) $filter[] = "low_MQM";
-	}
-	if (isset($sample["TRIO"]))
-	{
-		$quality[] = "TRIO=".$sample["TRIO"];
 	}
 	
 	//variant details
@@ -363,7 +379,7 @@ while(!feof($handle))
 			}
 			
 			//skip transcripts that are not flagged as "gencode basic"
-			if ($details!="intergenic_region")
+			if (count($gencode_basic)>0 && $details!="intergenic_region")
 			{
 				$transcript = trim($parts[6]);
 				if (!isset($gencode_basic[$transcript])) continue;
@@ -417,6 +433,10 @@ while(!feof($handle))
 	{
 		$filter[] = "pred_pathogenic";
 	}
+	if ($pp_count>2)
+	{
+		$filter[] = "pred_pathogenic_3";
+	}
 	
 	//OMIM
 	$omim = strtr(extract_string("OMIM", $info, ""), "_", " ");
@@ -429,14 +449,21 @@ while(!feof($handle))
 	//ClinVar
 	$clin_acc = explode("|", extract_string("CLINVAR_ACC", $info, ""));
 	$clin_sig = explode("|", extract_string("CLINVAR_SIG", $info, ""));
-	if (count($clin_acc)!=count($clin_sig)) trigger_error("Clinvar field counts do not match:\n".implode("|",$clin_acc)."\n".implode("|",$clin_sig)."" , E_USER_ERROR);
+	$clin_dis = explode("|", extract_string("CLINVAR_DISEASE", $info, ""));
+	if (count($clin_acc)!=count($clin_sig)) trigger_error("ClinVar field counts do not match: ACC:".count($clin_acc)." SIG:".count($clin_sig)." DISEASE:".count($clin_dis) , E_USER_ERROR);
+	while (count($clin_dis)<count($clin_acc))
+	{
+		$clin_dis[] = "";
+	}
 	$clinvar = "";
 	for($i=0; $i<count($clin_acc); ++$i)
 	{
 		if (trim($clin_acc[$i]=="")) continue;
-		$clinvar .= $clin_acc[$i]." [".strtr($clin_sig[$i], "_", " ")."]; ";
+		$disease = trim($clin_dis[$i]);
+		if ($disease!="") $disease = " DISEASE=".$disease;
+		$clinvar .= $clin_acc[$i]." [".strtr($clin_sig[$i], "_", " ").$disease."]; ";
 	}
-	if (contains($clinvar, "pathogenic")) $filter[] = "anno_pathogenic_clinvar";  //matches "pathogenic" and "likely pathogenic"
+	if (contains($clinvar, "pathogenic") && !contains($clinvar, "conflicting")) $filter[] = "anno_pathogenic_clinvar";  //matches "pathogenic" and "likely pathogenic"
 	
 	//HGMD
 	$hgmd_id = explode("|", extract_string("HGMD_ID", $info, ""));

@@ -1,7 +1,7 @@
 <?php
 
 /** 
-	@page mapping_bwa
+	@page mip_generator
 	@todo move calculation folder to temp and copy only files that are necessary
 	@todo step 3: further filtering of MIPs, check if target region is covered sufficiently and update low-coverage statistics
 */
@@ -96,7 +96,7 @@ if($mode=="ffpe")	$args .= "-half_seal_both_strands off -double_tile_strands_sep
 if($mode=="cfdna")	$args .= "-half_seal_both_strands off -double_tile_strands_separately on ";
 $parser->exec(get_path('mipgen'), $args, true);
 $p_mips = $out_folder."/".$project_name."_mips_picked.txt";
-$parser->exec("cp","$temp_folder/$project_name.picked_mips.txt $p_mips",true);
+$parser->moveFile("$temp_folder/$project_name.picked_mips.txt", $p_mips);
 
 // 3. filter MIPs and generate low-cov-statistics
 $tmp_p_cov = $temp_folder."/tmp_mips_cov.bed";
@@ -131,18 +131,17 @@ for($i=0;$i<$cov->rows();++$i)
 {
 	$c_cov += $cov->getRow($i)[2]-$cov->getRow($i)[1];
 }
-//$parser->exec(get_path("ngs-bits")."/BedAnnotateGenes","-in $p_cov -out $p_cov",true);
 
 // 4. missing regions
 $p_miss = $out_folder."/".$project_name."_target_missing.bed";
 $c_miss = 0;
-$parser->exec(get_path("ngs-bits")."/BedSubtract","-in $target -in2 $p_cov -out $p_miss",true);
+$parser->exec(get_path("ngs-bits")."/BedSubtract","-in $target -in2 $p_cov -out $p_miss", true);
 $miss = Matrix::fromTSV($p_miss);
 for($i=0;$i<$miss->rows();++$i)
 {
 	$c_miss += $miss->getRow($i)[2]-$miss->getRow($i)[1];
 }
-$parser->exec(get_path("ngs-bits")."/BedAnnotateGenes","-in $p_miss -out $p_miss",true);
+$parser->exec(get_path("ngs-bits")."/BedAnnotateGenes","-in $p_miss -out $p_miss", true);
 
 $parser->log("Pre-Filter used for MIPs: ".($no_svr?"none ":"Minimum 'svr=$min_svr', ").". Used mode '$mode'");
 $parser->log("Total number of MIPs:\t".($mips_new->rows()).".");

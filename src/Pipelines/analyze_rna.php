@@ -175,9 +175,8 @@ if (in_array("ma", $steps))
 		if (isset($target_file) && $target_file != "") $abra_params[] = "-roi {$target_file}";
 		
 		$parser->execTool("NGS/indel_realign_abra.php", implode(" ", $abra_params));
-
-		copy2($abra_out, $final_bam);
-		$parser->exec(get_path("samtools")." index", $final_bam, true);
+		$parser->moveFile($abra_out, $final_bam);
+		$parser->indexBam($final_bam, $threads);
 	}
 
 	//mapping QC
@@ -194,29 +193,61 @@ if (in_array("ma", $steps))
 
 //read counting
 $counts_raw = $prefix."_counts_raw.tsv";
+$counts_exon_raw = $prefix."_counts_exon_raw.tsv";
 $counts_normalized = $prefix."_counts.tsv";
+$counts_qc = $prefix."_stats_rc.tsv";
+$repair_bam = $final_bam;
 if (in_array("rc", $steps))
 {
-	$args = array(
-		"-in", $final_bam,
-		"-out", $counts_raw,
+	if ($paired)
+	{
+		$repair_bam = $parser->tempFile(".bam", "{$name}_");
+		$parser->exec(dirname(get_path("feature_counts")) . "/utilities/repair",
+			"-i {$final_bam} -o {$repair_bam} -T {$threads}", true);
+	}
+	
+	$args_common = array(
+		"-in", $repair_bam,
 		"-library_type", $library_type,
 		"-gtf_file", $gtfFile,
 		"-threads", $threads
 	);
 	
-	if (!$paired) $args[] = "-single_end";
-	
+	if (!$paired)
+	{
+		$args_common[] = "-single_end";
+	}
+
+	$args = array_merge($args_common, [
+		"-out", $counts_raw,
+		"-qc_file", $counts_qc
+	]);
+
 	$parser->execTool("NGS/rc_featurecounts.php", implode(" ", $args));
 
-	//normalize read counts
+	// exon-level counting
+	$args_exon = array_merge($args_common, [
+		"-exon_level",
+		"-out", $counts_exon_raw
+	]);
+	$parser->execTool("NGS/rc_featurecounts.php", implode(" ", $args_exon));
+
+	// read count normalization
 	$parser->execTool("NGS/rc_normalize.php", "-in $counts_raw -out $counts_normalized");
+
+	// re-run read counting without duplicate alignments
+	$counts_nodup = $prefix."_counts_nodup_raw.tsv";
+	$args_dup = array_merge($args_common, [
+		"-ignore_dup",
+		"-out", $counts_nodup
+	]);
+	$parser->execTool("NGS/rc_featurecounts.php", implode(" ", $args_dup));
 }
 
 //annotate
 if (in_array("an", $steps))
 {
-	$parser->execTool("NGS/rc_annotate.php", "-in $counts_normalized -out $counts_normalized -gtfFile $gtfFile");
+	$parser->execTool("NGS/rc_annotate.php", "-in $counts_normalized -out $counts_normalized -gtfFile $gtfFile -annotationIds gene_name,gene_biotype");
 }
 
 //detect fusions
@@ -250,7 +281,7 @@ if (in_array("fu",$steps))
 		);
 
 		$parser->exec(get_path("STAR-Fusion"), implode(" ", $starfusion_params), true);
-		$parser->exec("cp", "{$fusion_tmp_folder}/star-fusion.fusion_candidates.final.abridged {$prefix}_var_fusions.tsv", true);
+		$parser->moveFile("{$fusion_tmp_folder}/star-fusion.fusion_predictions.tsv", "{$prefix}_var_fusions.tsv");
 	
 	}
 	else
@@ -267,7 +298,7 @@ if (in_array("db", $steps))
 	$parser->execTool("NGS/db_check_gender.php", "-in $final_bam -pid $name --log $log_db");
 
 	//import QC data
-	$parser->execTool("NGS/db_import_qc.php", "-id $name -files $qc_fastq $qc_map -force --log $log_db");
+	$parser->execTool("NGS/db_import_qc.php", "-id $name -files $qc_fastq $qc_map -force -skip_parameters 'QC:2000024' --log $log_db");
 
 	//update last analysis date
 	updateLastAnalysisDate($name, $final_bam);

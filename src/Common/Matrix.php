@@ -189,6 +189,9 @@ class Matrix
 			$this->data[$i][$column_index] = $values[$i];
 			$this->data[$i] = array_merge($this->data[$i],$tmp);
 		}
+		
+		//increase number of columns
+		++$this->cols;
 	}
 	
 	/// Sets the values of a row.
@@ -213,6 +216,20 @@ class Matrix
 	function addComment($line) 
 	{
 		$this->comments[] = $line;
+	}
+	
+	/// Removes a Comment
+	function removeComment($comment_text)
+	{
+		for($i=0;$i<count($this->comments);$i++)
+		{
+			//print_r($comment_text." ".$this->comments[$i]."\n");
+			if($comment_text == $this->comments[$i])
+			{
+				array_splice($this->comments,$i,1);
+				break;
+			}
+		}
 	}
 	
 	/// Appends a column.
@@ -375,7 +392,7 @@ class Matrix
 		//headers
 		for ($i=0; $i<count($comments); ++$i)
 		{
-			$parts = explode($separator, $comments[$i]);
+			$parts = explode($separator, trim($comments[$i]));
 			if (count($parts)==$output->cols() || ($output->cols()==0 && $i==(count($comments)-1)))
 			{
 				$output->setHeaders($parts);
@@ -404,7 +421,7 @@ class Matrix
 		{
 			for($i=0; $i<count($this->getComments()); ++$i)
 			{
-				fwrite($handle , $comment.($this->comments[$i])."\n");
+				fwrite($handle , $comment.(trim($this->comments[$i]))."\n");
 			}
 		}
 

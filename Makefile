@@ -15,6 +15,11 @@ help:
 	@echo "Auxilary targets:"
 	@echo "  find_missing_tests - Checks for tools that do not have a test."
 	@echo "  todos              - Checks for todos in the code"
+	@echo "  pull               - Pull latest version from GitHub"
+	
+pull:
+	git pull --recurse-submodules
+	git submodule update --recursive
 
 test: dummy
 	@cd test && find . -name "test_*.php"  | xargs -l1000 php execute_tests.php ALL 
@@ -49,9 +54,6 @@ test_pipeline_t: dummy
 test_pipeline_m: dummy
 	@cd test/data_multi && make all
 
-test_pipeline_c: dummy
-	@cd test/data_capa && make all
-
 test_pipeline_i: dummy
 	@cd test/data_ivac && make all
 
@@ -68,7 +70,6 @@ test_all: dummy
 	make test_pipeline_s > p_s.log 2>&1 &
 	make test_pipeline_t > p_t.log 2>&1 &
 	make test_pipeline_m > p_m.log 2>&1 &
-	make test_pipeline_c > p_c.log 2>&1 &
 	make test_pipeline_r > p_r.log 2>&1 &
 
 test_all_status:

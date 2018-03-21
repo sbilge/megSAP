@@ -1,6 +1,6 @@
 ##DESCRIPTION=genotype=Genotype of variant in sample.
 ##DESCRIPTION=filter=Annotations for filtering and ranking variants.
-##DESCRIPTION=quality=Quality parameters - SNP quality (QUAL), depth (DP), allele frequency (AF), mean mapping quality of alternate allele (MQM), genotype, depth and allele frequency for child, mother and father (TRIO).
+##DESCRIPTION=quality=Quality parameters - SNP quality (QUAL), depth (DP), allele frequency (AF), mean mapping quality of alternate allele (MQM).
 ##DESCRIPTION=gene=Affected gene list (comma-separated).
 ##DESCRIPTION=variant_type=Variant type.
 ##DESCRIPTION=coding_and_splicing=Coding and splicing details (Gene, ENST number, type, impact, exon number, HGVS.c, HGVS.p).
@@ -25,6 +25,7 @@
 ##FILTER=low_MQM=Mean mapping quality of alternate allele less than Q50.
 ##FILTER=low_QUAL=Variant quality less than Q30.
 ##FILTER=pred_pathogenic=Variant predicted to be pathogenic by one or more tools (conservation or effect prediction).
+##FILTER=pred_pathogenic_3=Variant predicted to be pathogenic by three or more tools (conservation or effect prediction).
 ##FILTER=gene_blacklist=The gene(s) are contained on the blacklist of unreliable genes.
 ##FILTER=anno_pathogenic_clinvar=Variant annotated to be pathogenic by ClinVar.
 ##FILTER=anno_pathogenic_hgmd=Variant annotated to be pathogenic by HGMD.

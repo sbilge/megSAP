@@ -380,7 +380,7 @@ function load_system(&$filename, $ps_name = "")
 		}
 
 		//get processed sample raw data
-		$res = $db->executeQuery("SELECT sys.name_manufacturer, sys.name_short, sys.adapter1_p5, sys.adapter2_p7, sys.type, sys.shotgun, sys.target_file, g.build FROM processing_system as sys, genome as g, processed_sample as ps, sample as s WHERE sys.genome_id=g.id and sys.id=ps.processing_system_id and ps.id=:pid", array("pid"=>$pid));
+		$res = $db->executeQuery("SELECT sys.name_manufacturer, sys.name_short, sys.adapter1_p5, sys.adapter2_p7, sys.type, sys.shotgun, sys.umi_type, sys.target_file, g.build FROM processing_system as sys, genome as g, processed_sample as ps, sample as s WHERE sys.genome_id=g.id and sys.id=ps.processing_system_id and ps.id=:pid", array("pid"=>$pid));
 		$output = array();
 		$output[] = "name_short = \"".$res[0]['name_short']."\"";
 		$output[] = "name_manufacturer = \"".$res[0]['name_manufacturer']."\"";
@@ -388,6 +388,7 @@ function load_system(&$filename, $ps_name = "")
 		$output[] = "adapter1_p5 = \"".$res[0]['adapter1_p5']."\"";
 		$output[] = "adapter2_p7 = \"".$res[0]['adapter2_p7']."\"";
 		$output[] = "shotgun = ".$res[0]['shotgun'];
+		$output[] = "umi_type = \"".$res[0]['umi_type']."\"";
 		$output[] = "type = \"".$res[0]['type']."\"";
 		$output[] = "build = \"".$res[0]['build']."\"";
 		
@@ -672,7 +673,7 @@ function updateLastAnalysisDate($psname, $file)
 }
 
 
-///Updates the last analysis date of a processed sample using a file date.
+///Updates normal sample entry for given tumor sample.
 function updateNormalSample($ps_tumor, $ps_normal, $overwrite = false)
 {
 	$db = DB::getInstance("NGSD");
@@ -1209,6 +1210,8 @@ function load_vcf_normalized($filename)
 
 function vcf_strelka_snv($format_col, $sample_col, $obs)
 {
+	if (!preg_match("/^[acgtACGT]*$/", $obs))	trigger_error("Invalid observed allele (".$format_col." ".$sample_col." ".$obs.").",E_USER_ERROR);
+
 	$f = explode(":",$format_col);
 	$index_depth = array_search("DP",$f);
 	$index_TU = array_search("TU",$f);
@@ -1230,7 +1233,7 @@ function vcf_strelka_snv($format_col, $sample_col, $obs)
 	else if($obs == "A") $o = $au;
 	else if($obs == "C") $o = $cu;
 	else if($obs == "G") $o = $gu;
-	else	trigger_error("Alternative allele '$obs' unknown.",E_USER_WARNING);	// unknown alleles are 'A,G', '.'
+	else	trigger_error("Alternative allele '$obs' unknown (".$format_col." ".$sample_col." ".$obs.").",E_USER_WARNING);	// unknown alleles multiallelic or '.'
 
 	$f = 0;
 	if($sum!=0)	$f = number_format($o/$sum,4);
@@ -1250,6 +1253,7 @@ function vcf_strelka_indel($format_col, $sample_col)
 	$d = explode(":",$sample_col)[$index_depth];
 	list($tir,) = explode(",", explode(":",$sample_col)[$index_TIR]);
 	list($tar,) = explode(",", explode(":",$sample_col)[$index_TAR]);
+	if(!is_numeric($tir) || !is_numeric($tar))	trigger_error("Could not identify numeric depth for strelka indel (".$format_col." ".$sample_col.")", E_USER_ERROR);
 
 	//tir and tar contain strong supportin reads, tor (not considered here) contains weak supportin reads like breakpoints
 	//only strong supporting reads are used for calculation of allele fraction
@@ -1264,18 +1268,44 @@ function vcf_freebayes($format_col, $sample_col)
 	$g = explode(":",$format_col);
 	$index_DP = NULL;
 	$index_AO = NULL;
+	$index_GT = NULL;
 	for($i=0;$i<count($g);++$i)
 	{
 		if($g[$i]=="DP")	$index_DP = $i;
 		if($g[$i]=="AO")	$index_AO = $i;
+		if($g[$i]=="GT")	$index_GT = $i;
 	}
 
-	if(is_null($index_DP) || is_null($index_AO))	trigger_error("Invalid freebayes format; either field DP or AO not available.",E_USER_ERROR);
+	if(is_null($index_DP) || is_null($index_AO) ||is_null($index_GT))	trigger_error("Invalid freebayes format; either field DP, GT or AO not available.",E_USER_ERROR);	
 	
-	$d = explode(":",$sample_col)[$index_DP];
+	$s = explode(":",$sample_col);
+
+	// workaround for bug during splitting of multi-allelic variants - allele counts for multiple alleles are kept
+	if(strpos($s[$index_AO],",")!==FALSE)
+	{		
+		$gt = $s[$index_GT];
+		
+		$sep = "/";
+		if(strpos($s[$index_GT],"|")!==FALSE)	$sep = "|";
+		
+		$idx_al1 = min(explode($sep,$gt));
+		$idx_al2 = max(explode($sep,$gt));
+		if($idx_al1!=0 || $idx_al2!=1)	trigger_error("Unexpected error. Allele 1 is $idx_al1, Allele 2 is $idx_al2; expected 0 and 1  (".$format_col." ".$sample_col.").",E_USER_ERROR); 
+				
+		$tmp = 0;
+		$tmp = explode(",",$s[$index_AO])[$idx_al2-1];
+		$s[$index_AO] = $tmp;
+	}
+	
+	if(!is_numeric($s[$index_AO]))	trigger_error("Invalid alternative allele count (".$format_col." ".$sample_col.").",E_USER_ERROR);	// currently no multiallelic variants supported
+	if(!is_numeric($s[$index_DP]))	trigger_error("Could not identify numeric depth (".$format_col." ".$sample_col.").",E_USER_ERROR);
+
+	$d1 = $s[$index_DP];
+	$d2 = $s[$index_AO];
+	
 	$f = null;
-	if($d>0)	$f = number_format(explode(":",$sample_col)[$index_AO]/$d, 4);
-	return array($d,$f);
+	if($d1>0)	$f = number_format($d2/$d1, 4);
+	return array($d1,$f);
 }
 
 function vcf_iontorrent($format_col, $sample_col, $idx_al)
@@ -1361,7 +1391,7 @@ function get_processed_sample_info($ps_name, $error_if_not_found=true, $db_name=
 	//get info from NGSD
 	list($sample_name, $process_id) = explode("_", $ps_name."_");
 	$db = DB::getInstance($db_name);
-	$res = $db->executeQuery("SELECT p.name as project_name, p.type as project_type, p.id as project_id, ps.id as ps_id, r.name as run_name, d.type as device_type, r.id as run_id, ps.normal_id as normal_id, s.tumor as is_tumor, s.gender as gender, s.ffpe as is_ffpe, s.disease_group as disease_group, s.disease_status as disease_status, sys.type as sys_type, sys.target_file as sys_target, sys.name_manufacturer as sys_name, s.name_external as name_external ".
+	$res = $db->executeQuery("SELECT p.name as project_name, p.type as project_type, p.id as project_id, ps.id as ps_id, r.name as run_name, d.type as device_type, r.id as run_id, ps.normal_id as normal_id, s.tumor as is_tumor, s.gender as gender, s.ffpe as is_ffpe, s.disease_group as disease_group, s.disease_status as disease_status, sys.type as sys_type, sys.target_file as sys_target, sys.name_manufacturer as sys_name, sys.name_short as sys_name_short, s.name_external as name_external ".
 	                        "FROM project p, processed_sample ps, sample s, processing_system as sys, sequencing_run as r, device as d ".
 				"WHERE ps.sequencing_run_id=r.id AND ps.project_id=p.id AND ps.sample_id=s.id AND s.name='$sample_name' AND ps.processing_system_id=sys.id AND ps.process_id='".(int)$process_id."' AND r.device_id = d.id");
 	if (count($res)!=1)
@@ -1461,6 +1491,38 @@ function vcf_column_index($name, $header)
 	}
 	
 	return $indices[0];
+}
+
+//checks whether gene names are up to date. Expects array with genes as input.
+//Returns an array with approved symbols, obsolete gene names are replaced with up-to-data names
+//If gene symbol is not found it is returned unaltered.
+function approve_gene_names($input_genes)
+{
+	$genes_as_string = "";
+	foreach($input_genes as $gene)
+	{
+		//set dummy if there are empty lines in input file
+		if(trim($gene) == "")
+		{
+			$gene =  "NOT_AVAILABLE";
+		}
+		
+		$genes_as_string = $genes_as_string.$gene."\n";
+	}
+	$non_approved_genes_file = tempnam(sys_get_temp_dir(),"temp_");
+	file_put_contents($non_approved_genes_file,$genes_as_string);
+	
+	//write stdout to $approved_genes -> each checked gene is one array element
+	$approved_genes = exec2(get_path("ngs-bits",true)."GenesToApproved -in $non_approved_genes_file")[0];
+	
+	$output = array();
+	foreach($approved_genes as $gene)
+	{
+		//remove dummy before saving
+		if($gene == "NOT_AVAILABLE") $gene = "";
+		$output[] = (explode("\t",$gene))[0];
+	}
+	return $output;
 }
 
 ?>

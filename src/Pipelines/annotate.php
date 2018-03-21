@@ -21,6 +21,7 @@ $parser->addInt("thres", "Number of flanking bases around exons which are consid
 $parser->addFlag("no_fc", "No format check (vcf/tsv).");
 $parser->addFlag("no_ngsd", "No annotation of variants with information from NGSD.");
 $parser->addFlag("multi", "Enable multi-sample mode.");
+$parser->addFlag("updown","Annotate variants up- or downstream of genes.");
 extract($parser->parse($argv));
 
 //input file names
@@ -46,6 +47,7 @@ $annfile = $parser->tempFile(".vcf");
 $annfile_zipped = $out_folder."/".$out_name."_var_annotated.vcf.gz";	
 $varfile = $out_folder."/".$out_name.".GSvar";	
 $varfile_full = $out_folder."/".$out_name."_full.GSvar";
+$varfile_rare = $out_folder."/".$out_name."_rare.GSvar";
 $stafile = $out_folder."/".$out_name."_stats_vc.qcML";
 
 //get system
@@ -57,7 +59,7 @@ if ($sys['build']!="hg19" && $sys['build']!="GRCh37" && $sys['build']!="mm10")
 
 //annotate VCF
 $args = array("-in $vcf_unzipped", "-thres $thres", "-out $annfile");
-if ($sys['type']!="WGS")
+if ($sys['type']!="WGS" && !$updown)
 {
 	$args[] = "-no_updown";
 }
@@ -76,7 +78,7 @@ if ($t_col=="na") //germline
 	//calculate variant statistics (after annotation because it needs the ID and ANN fields)
 	$parser->exec(get_path("ngs-bits")."VariantQC", "-in $annfile -out $stafile", true);
 	
-	$args = array("-in $annfile", "-out $varfile");
+	$args = array("-in $annfile", "-out $varfile", "-build ".$sys['build']);
 	if ($multi)
 	{
 		$args[] = "-multi";
@@ -90,7 +92,7 @@ else //somatic
 	
 	//annotate additional columns, somatic only
 	$tmp_annfile = $parser->tempFile("_somatic.vcf");
-	if(!rename($annfile,$tmp_annfile))	trigger_error("Could not move '$annfile' to '$tmp_annfile'.",E_USER_ERROR);
+	$parser->moveFile($annfile, $tmp_annfile);
 	$cols = array("Interpro_domain");
 	$parser->exec(get_path("SnpSift"), "dbnsfp -noLog -db ".get_path("data_folder")."/dbs/dbNSFP/dbNSFPv2.9.3.txt.gz -f ".implode(",",$cols)." $tmp_annfile > $annfile", true);
 	//SnpSift vcf comments are printed twice using dbNSFP -> remove duplicate comments
@@ -106,13 +108,14 @@ $parser->exec("tabix", "-p vcf $annfile_zipped", false); //no output logging, be
 //use exonic/splicing variant list for WGS only (otherwise the NGSD annotation takes too long)
 if ($sys['type']=="WGS" && ($sys['build']=="hg19" || $sys['build']=="GRCh37")) 
 {
-	rename($varfile, $varfile_full);
+	$parser->moveFile($varfile, $varfile_full);
 	$tmp = $parser->tempFile(".bed");
 	file_put_contents($tmp, "chrMT\t0\t16569");
 	$roi_with_mito = $parser->tempFile(".bed");
 	$parser->exec(get_path("ngs-bits")."BedAdd", "-in ".get_path("data_folder")."/enrichment/ssHAEv6_2017_01_05.bed -in2 {$tmp} -out {$roi_with_mito}", false);
 	$parser->exec(get_path("ngs-bits")."BedMerge", "-in {$roi_with_mito} -out {$roi_with_mito}", false);
 	$parser->exec(get_path("ngs-bits")."VariantFilterRegions", "-in $varfile_full -out $varfile -reg {$roi_with_mito}", true);
+	$parser->exec(get_path("ngs-bits")."VariantFilterAnnotations", "-in $varfile_full -out $varfile_rare -max_af 0.01", true);
 }
 
 //annotated variant frequencies from NGSD (not for somatic)

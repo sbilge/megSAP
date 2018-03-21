@@ -21,6 +21,7 @@ $parser->addInt("threads", "The maximum number of threads used.", true, 2);
 $parser->addInt("thres", "Splicing region size used for annotation (flanking the exons).", true, 20);
 $parser->addFlag("clip_overlap", "Soft-clip overlapping read pairs.", true);
 $parser->addFlag("no_abra", "Skip realignment with ABRA.", true);
+$parser->addFlag("correction_n", "Use Ns for errors by barcode correction.", true);
 $parser->addString("out_folder", "Folder where analysis results should be stored. Default is same as in '-folder' (e.g. Sample_xyz/).", true, "default");
 extract($parser->parse($argv));
 
@@ -51,6 +52,7 @@ $parser->execTool("Tools/data_setup.php", "-build ".$sys['build']);
 $bamfile = $out_folder."/".$name.".bam";
 if(!in_array("ma", $steps))	$bamfile = $folder."/".$name.".bam";
 $vcffile = $out_folder."/".$name."_var.vcf.gz";
+$vcffile_annotated = $out_folder."/".$name."_var_annotated.vcf.gz";	
 if(!in_array("vc", $steps))	$vcffile = $folder."/".$name."_var.vcf.gz";
 $varfile = $out_folder."/".$name.".GSvar";
 $lowcov_file = $out_folder."/".$name."_".$sys["name_short"]."_lowcov.bed";
@@ -65,6 +67,7 @@ $qc_map  = $out_folder."/".$name."_stats_map.qcML";
 $qc_vc  = $out_folder."/".$name."_stats_vc.qcML";
 $cnvfile = $out_folder."/".$name."_cnvs.tsv";
 $cnvfile2 = $out_folder."/".$name."_cnvs.seg";
+$rohfile = $out_folder."/".$name."_rohs.tsv";
 
 //move old data to old_[date]_[random]-folder
 if($backup && in_array("ma", $steps))
@@ -89,7 +92,7 @@ if (in_array("ma", $steps))
 	$files2 = glob($in_rev);
 	if (count($files1)!=count($files2))
 	{
-		trigger_error("Found mismatching forward and reverse read file count!\n Forward: ".implode(" ", $in_for)."\n Reverse: ".implode(" ", $in_rev), E_USER_ERROR);
+		trigger_error("Found mismatching forward and reverse read file count!\n Forward: $in_for\n Reverse: $in_rev.", E_USER_ERROR);
 	}
 	if (count($files1)==0)
 	{
@@ -100,8 +103,15 @@ if (in_array("ma", $steps))
 	if($clip_overlap) $args[] = "-clip_overlap";
 	if($no_abra) $args[] = "-no_abra";
 	if(file_exists($log_ma)) unlink($log_ma);
-	
+	if($correction_n) $args[] = "-correction_n";
 	$parser->execTool("Pipelines/mapping.php", "-in_for ".implode(" ", $files1)." -in_rev ".implode(" ", $files2)." -system $system -out_folder $out_folder -out_name $name --log $log_ma ".implode(" ", $args)." -threads $threads");
+
+	//low-coverage report
+	if ($sys['type']!="WGS" && $sys['target_file']!="") //ROI (but not WGS)
+	{	
+		$parser->exec(get_path("ngs-bits")."BedLowCoverage", "-in ".$sys['target_file']." -bam $bamfile -out $lowcov_file -cutoff 20", true);
+		if (db_is_enabled("NGSD")) $parser->exec(get_path("ngs-bits")."BedAnnotateGenes", "-in $lowcov_file -clear -extend 25 -out $lowcov_file", true);
+	}
 }
 
 //variant calling
@@ -121,12 +131,16 @@ if (in_array("vc", $steps))
 	{
 		$args[] = "-min_af 0.1";
 	}
+	if($sys['type']=="Panel MIPs")
+	{
+		$args[] = "-no_bias";
+	}
 	
 	if(file_exists($log_vc)) unlink($log_vc);
 	$parser->execTool("NGS/vc_freebayes.php", "-bam $bamfile -out $vcffile -build ".$sys['build']." --log $log_vc ".implode(" ", $args));
 	
 	//if WES, perform special variant calling for mitochondria
-	$mito = ($sys['type']=="WES");
+	$mito = ($sys['type']=="WES" && $sys['target_file']!="");
 	if ($mito)
 	{
 		$target_mito = $parser->tempFile("_mito.bed");
@@ -189,22 +203,20 @@ if (in_array("vc", $steps))
 if (in_array("an", $steps))
 {
 	if(file_exists($log_an)) unlink($log_an);
-	
+
 	//annotate
 	$args = array("-out_name $name", "-out_folder $out_folder", "-system $system", "-thres $thres", "--log $log_an");
 	if (!db_is_enabled("NGSD")) $args[] = "-no_ngsd";
 	$parser->execTool("Pipelines/annotate.php", implode(" ", $args));
 	
-	//low-coverage report
-	if($sys['type']=="WGS") //WGS
+	//ROH detection
+	if ($sys['type']=="WGS" || $sys['type']=="WES")
 	{
-		$parser->exec(get_path("ngs-bits")."BedLowCoverage", "-wgs -bam $bamfile -out $lowcov_file -cutoff 20", true);
-		if (db_is_enabled("NGSD")) $parser->exec(get_path("ngs-bits")."BedAnnotateGenes", "-in $lowcov_file -extend 25 -out $lowcov_file", true);
-	}
-	else if ($sys['target_file']!="") //ROI (but not WGS)
-	{	
-		$parser->exec(get_path("ngs-bits")."BedLowCoverage", "-in ".$sys['target_file']." -bam $bamfile -out $lowcov_file -cutoff 20", true);
-		if (db_is_enabled("NGSD")) $parser->exec(get_path("ngs-bits")."BedAnnotateGenes", "-in $lowcov_file -extend 25 -out $lowcov_file", true);
+		$args = array();
+		$args[] = "-in $vcffile_annotated";
+		$args[] = "-out $rohfile";
+		$args[] = "-annotate ".repository_basedir()."/data/gene_lists/genes.bed ".get_path("data_folder")."/dbs/OMIM/omim.bed";
+		$parser->exec(get_path("ngs-bits")."RohHunter", implode(" ", $args), true);
 	}
 }
 
@@ -230,7 +242,7 @@ if (in_array("db", $steps))
 }
 
 //copy-number analysis
-if (in_array("cn", $steps) && $sys['type']!="WGS")
+if (in_array("cn", $steps) && $sys['type']!="WGS" && $sys['target_file']!="")
 {
 	if(file_exists($log_cn)) unlink($log_cn);
 	
@@ -244,21 +256,28 @@ if (in_array("cn", $steps) && $sys['type']!="WGS")
 	{
 		//create reference folder if it does not exist
 		$ref_folder = get_path("data_folder")."/coverage/".$sys['name_short']."/";
-		if (!is_dir($ref_folder)) mkdir($ref_folder);
+		if (!is_dir($ref_folder))
+		{
+			mkdir($ref_folder);
+			if (!chmod($ref_folder, 0777))
+			{
+				trigger_error("Could not change privileges of folder '{$ref_folder}'!", E_USER_ERROR);
+			}
+		}
 		
 		//copy file
 		$ref_file = $ref_folder.$name.".cov";
-		copy2($cov_file, $ref_file);
+		$parser->copyFile($cov_file, $ref_file);
 		$cov_file = $ref_file;
 	}
 	
 	//perform copy-number analysis
 	$cnv_out = $tmp_folder."/output.tsv";
 	$cnv_out2 = $tmp_folder."/output.seg";
-	$parser->execTool("NGS/vc_cnvhunter.php", "-min_z 3.5 -cov $cov_file -system $system -out $cnv_out -seg $name --log $log_cn");
+	$parser->execTool("NGS/vc_cnvhunter.php", "-min_z 3.5 -cov $cov_file -system $system -out $cnv_out -seg $name -n ".($sys['type']=="WES" ? "30" : "20")." --log $log_cn");
 
 	//copy results to output folder
-	if (file_exists($cnv_out)) copy2($cnv_out, $cnvfile);
-	if (file_exists($cnv_out2)) copy2($cnv_out2, $cnvfile2);
+	if (file_exists($cnv_out)) $parser->moveFile($cnv_out, $cnvfile);
+	if (file_exists($cnv_out2)) $parser->moveFile($cnv_out2, $cnvfile2);
 }
 

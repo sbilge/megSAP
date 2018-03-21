@@ -13,7 +13,6 @@ $parser->addFlag("upload", "Enable real upload (otherwise a dry run is performed
 $parser->addString("project", "Restrict upload to a project.", true, "");
 $parser->addStringArray("samples", "Restrict upload to a list of processed sample.", true, "");
 $parser->addFlag("force_reupload", "Upload files even if already uploaded.", true, "");
-$parser->addFlag("force_sap", "Makes the SAP ID mandatory (and the QBIC ID optional).", true, "");
 extract($parser->parse($argv));
 
 //check project
@@ -97,30 +96,6 @@ function checkProbeneingang($name, $table)
 	return null;
 }
 
-//determine SAP identifier from GenLab
-function getSapId($name)
-{	
-	$db = DB::getInstance("GL8");
-	$res = $db->executeQuery("SELECT identnr FROM v_ngs_sap WHERE labornummer LIKE '$name'");
-	
-	//no hit
-	if (count($res)==0) return null;
-	
-	//more than one hit => error
-	if (count($res)>1)
-	{
-		print_r($res);
-		trigger_error("Found more than one sample '$name' in GenLab!", E_USER_ERROR);
-	}
-	
-	//one hit
-	$sap_id = trim($res[0]['identnr']);
-	if ($sap_id=="") return null;
-	
-	return $sap_id;
-}
-
-
 //determine QBIC/FO ID from sample name (and external sample name)
 function getExternalNames($name, $name_ex)
 {
@@ -169,14 +144,7 @@ function getSampleInfo($ps_id)
 	$output['ngsd_processedsample_id'] = $ps_id;
 	$output['id_genetics'] = $ps_name;
 	$names = getExternalNames($s_name, $s_name_ex);
-	if (is_null($names)) //this can only be null when 'force_sap' is used
-	{
-		$output['id_qbic'] = "";
-	}
-	else
-	{
-		$output['id_qbic'] = $names[0];
-	}
+	$output['id_qbic'] = $names[0];
 	$output['processing_system'] = $ps_sys;
 	$output['tumor'] = $s_tumor ? "yes" : "no";
 	$output['genome'] = $ps_genome;
@@ -277,9 +245,12 @@ function storeMetaData($path, $name, $data)
 //copies files to a folder (or touches output file in debug mode)
 function copyFiles($files, $to_folder, $upload)
 {
+	global $parser;
+
 	foreach($files as $file)
 	{
 		$outfile = $to_folder."/".basename($file);
+
 		if (!$upload)
 		{
 			if (!touch($outfile))
@@ -289,7 +260,7 @@ function copyFiles($files, $to_folder, $upload)
 		}
 		else
 		{
-			copy2($file, $outfile);
+			$parser->copyFile($file, $outfile);
 		}
 	}
 }
@@ -353,7 +324,7 @@ foreach($res as $row)
 	
 	//check if we have a QBIC name
 	$names = getExternalNames($s_name, $s_name_ex);
-	if (is_null($names) && !$force_sap) continue;
+	if (is_null($names)) continue;
 	list($qbic_name, $fo_name) = $names;
 	
 	$output = array();
@@ -421,44 +392,16 @@ foreach($res as $row)
 		//get folder and files
 		$skipped = false;
 		$missing = false;
-		if($sample1['experiment_type']=="dna_seq")
+
+		//skip samples where data is not at default location
+		$res3 = $db->executeQuery("SELECT p.type, p.name FROM processed_sample ps, project p WHERE ps.id='$ps_id' AND ps.project_id=p.id");
+		$project_folder = get_path("project_folder")."/".$res3[0]['type']."/".$res3[0]['name']."/";
+		$data_folder = $project_folder."Sample_".$ps_name."/";
+		if (!$skipped && !file_exists($data_folder))
 		{
-			//skip samples where data is not at default location
-			$res3 = $db->executeQuery("SELECT p.type, p.name FROM processed_sample ps, project p WHERE ps.id='$ps_id' AND ps.project_id=p.id");
-			$project_folder = get_path("project_folder")."/".$res3[0]['type']."/".$res3[0]['name']."/";
-			$data_folder = $project_folder."Sample_".$ps_name."/";
-			if (!$skipped && !file_exists($data_folder))
-			{
-				printTSV($output, "ERROR" ,"folder does not exist");
-				$missing = true;
-				continue;
-			}
-		}
-		else //rna_seq
-		{
-			if (!$skipped)
-			{
-				$hits = array();
-				foreach($sample_folders as $f)
-				{
-					if (contains($f, "Sample_".$ps_name))
-					{
-						$hits[] = $f;
-					}
-				}
-				
-				if (count($hits)>1)
-				{
-					printTSV($output, "ERROR" ,"several folders found: ".implode(", ", $hits));
-					continue;
-				}
-				if (count($hits)==0)
-				{
-					printTSV($output, "ERROR" ,"folder does not exist");
-					continue;
-				}
-				$data_folder = $hits[0]."/";
-			}
+			printTSV($output, "ERROR" ,"folder does not exist");
+			$missing = true;
+			continue;
 		}
 		
 		//determine files to transfer
@@ -492,17 +435,6 @@ foreach($res as $row)
 				$skipped = true;
 			}
 		}
-		
-		//check SAP identifier
-		if (!$skipped)
-		{	
-			$sample1['id_sap'] = getSapId($s_name);
-			if ($force_sap && is_null($sample1['id_sap']))
-			{
-				printTSV($output, "ERROR" ,"No SAP identifier found for '$ps_id'!");
-				$skipped = true;
-			}
-		}
 
 		//determine/create subfolder
 		if (!$skipped)
@@ -522,13 +454,14 @@ foreach($res as $row)
 			//upload data
 			if ($upload)
 			{
-				rename($tmpfolder, $GLOBALS["datamover_path"]."/".$folder_name);
+				$parser->moveFile($tmpfolder, $GLOBALS["datamover_path"]."/".$folder_name);
 				markAsUploaded($sample1, null, $files);
 			}
 			printTSV($output, $upload ? "UPLOADED" : "TO_UPLOAD" , implode(", ", $files));
 		}
 	
 		//handle tumor-normal pairs
+		$somatic_data_uploaded = false;
 		$normal_id = $sample1["normal_id"];
 		if ($normal_id!="")
 		{
@@ -555,7 +488,7 @@ foreach($res as $row)
 			}
 				
 			//skip tumor-normal pairs without unique data folder
-			$folders = glob("{".$project_folder."Somatic_{$ps_name}-{$ps_name2}*,".$project_folder."Sample_{$ps_name}-{$ps_name2}*}",GLOB_BRACE);	//backward compatibility
+			$folders = glob("{".$project_folder."Somatic_{$ps_name}-{$ps_name2}*}",GLOB_BRACE);
 			if (count($folders)==0)
 			{
 				printTSV($output, "ERROR" , "somatic folder does not exist");
@@ -568,22 +501,14 @@ foreach($res as $row)
 			}
 			$data_folder = $folders[0];
 			
-			$old_pipeline = false;
-			//get pipeline version
-			if(strpos($data_folder,$project_folder."Sample_")!==FALSE)	$old_pipeline = true;
-
 			//determine files to transfer
-			$pattern = null;
-			if($old_pipeline)
-			{
-				$pattern = "{".$data_folder."/{$ps_name}-{$ps_name2}*_vc_strelka.vcf,".$data_folder."/{$ps_name}-{$ps_name2}*.GSvar}"; #,".$data_folder."/{$ps_name2}.GSvar,".$data_folder."/{$ps_name2}_var.vcf
-			}
-			else
-			{
-				$pattern = "{$data_folder}/{{$ps_name}-{$ps_name2}*_var_annotated.vcf.gz,{$ps_name}-{$ps_name2}*.GSvar,{$ps_name2}*_var_annotated.vcf.gz,{$ps_name2}*.GSvar,*_counts.tsv,*_var_fusions.tsv}";
-			}
-			
-			$files = glob($pattern, GLOB_BRACE);
+			$patterns =  array();
+			$patterns[] = "{$ps_name}-{$ps_name2}*_var_annotated.vcf.gz";
+			$patterns[] = "{$ps_name}-{$ps_name2}*.GSvar";
+			$patterns[] = "{$ps_name2}*_var_annotated.vcf.gz";
+			$patterns[] = "{$ps_name2}*.GSvar";
+			$patterns[] = "*_counts.tsv,*_var_fusions.tsv";
+			$files = glob("{$data_folder}/{".implode(",", $patterns)."}", GLOB_BRACE);
 						
 			//skip already uploaded
 			$uploaded = false;
@@ -597,15 +522,6 @@ foreach($res as $row)
 			if (count($files)==0)
 			{
 				printTSV($output, "ERROR" , "no files to transfer in data folder '$data_folder'");
-				continue;
-			}
-			
-			//get SAP identifier
-			list($s_name2) = explode("_", $ps_name2);
-			$sample2['id_sap'] = getSapId($s_name);			
-			if ($force_sap && is_null($sample2['id_sap']))
-			{
-				printTSV($output, "ERROR" ,"No SAP identifier found for '$ps_name2'!");
 				continue;
 			}
 			
@@ -625,12 +541,49 @@ foreach($res as $row)
 			//upload data
 			if ($upload)
 			{
-				rename($tmpfolder, $GLOBALS["datamover_path"]."/".$folder_name);
+				$parser->moveFile($tmpfolder, $GLOBALS["datamover_path"]."/".$folder_name);
 				markAsUploaded($sample1, $sample2, $files);
+			}
+			printTSV($output, $upload ? "UPLOADED" : "TO_UPLOAD" , implode(" ", $files));
+			
+			$somatic_data_uploaded = true;
+		}
+		
+		//Upload somatic data in special format for MTB (Molecular Tumor Board)
+		if ($somatic_data_uploaded && file_exists("{$data_folder}/QBIC_files/"))
+		{
+			$output[4] = "{$ps_name}-{$ps_name2} (MTB)";
+			
+			//determine files to zip
+			$files = glob("{$data_folder}/QBIC_files/*.tsv");
+			
+			//determine/create subfolder
+			$folder_name = "{$qbic_name}_{$ps_name}-{$ps_name2}-MTB";
+			$tmpfolder = $GLOBALS["datamover_tmp"]."/".$folder_name;
+			if (file_exists($tmpfolder)) exec2("rm -rf $tmpfolder");
+			mkdir($tmpfolder);
+			
+			//copy and rename files
+			foreach($files as $file)
+			{
+				$outfile = basename($file);
+				$outfile =  $qbic_name.substr($outfile, 4);
+				$parser->copyFile($file, $tmpfolder."/".$outfile);
+			}
+			
+			//zip files
+			$zip = "{$tmpfolder}/{$qbic_name}_{$ps_name}-{$ps_name2}.zip";
+			exec2("cd {$tmpfolder} && zip -@ {$zip} *.tsv");
+			
+			//upload data
+			if ($upload)
+			{
+				$parser->moveFile($zip, $GLOBALS["datamover_path"]."/".basename($zip));
 			}
 			printTSV($output, $upload ? "UPLOADED" : "TO_UPLOAD" , implode(" ", $files));
 		}
 	}
 }
+
 
 ?>

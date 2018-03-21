@@ -42,7 +42,7 @@ $file_qci->setHeaders($tmp_headers);
 for($i=0; $i<$filec->rows();++$i)
 {
 	$row = $filec->getRow($i);	
-	if($pass && $row[6]!="PASS")	continue; 
+	if($pass && $row[6]!="PASS" && $row[6] != "freq-tum")	continue; 
 	
 	//  format field: add allele frequency "AD - 0.3"
 	$alleles = "0,0";
@@ -76,11 +76,6 @@ for($i=0; $i<$filec->rows();++$i)
 		if($ref == "A") $r = $nuc_a;
 		if($ref == "C") $r = $nuc_c;
 		if($ref == "G") $r = $nuc_g;
-
-//		list($nuc_t,) = explode(",", explode(":", $row[$idx_normal])[$idx_t]);
-//		list($nuc_a,) = explode(",", explode(":", $row[$idx_normal])[$idx_a]);
-//		list($nuc_c,) = explode(",", explode(":", $row[$idx_normal])[$idx_c]);
-//		list($nuc_g,) = explode(",", explode(":", $row[$idx_normal])[$idx_g]);
 	}
 	else if($variant == "INDEL")
 	{

@@ -29,7 +29,14 @@ if ($roi=="")
 
 //create/clear folder
 $ref_folder = get_path("data_folder")."/coverage/$name/";		
-if (!is_dir($ref_folder)) mkdir($ref_folder);
+if (!is_dir($ref_folder))
+{
+	mkdir($ref_folder);
+	if (!chmod($ref_folder, 0777))
+	{
+		trigger_error("Could not change privileges of folder '{$ref_folder}'!", E_USER_ERROR);
+	}
+}
 if ($clear)
 {
 	exec2("rm -rf $ref_folder/*.cov");
@@ -42,7 +49,7 @@ print "Coverage folder: $ref_folder\n";
 print "\n";
 
 //check samples
-list($samples) = exec2(get_path("ngs-bits")."SamplesNGSD -sys {$name} -quality bad -check_path | cut -f1,16 | grep -v ps.name");
+list($samples) = exec2(get_path("ngs-bits")."NGSDExportSamples -sys {$name} -quality bad -check_path | cut -f1,18 | grep -v ps.name");
 $bams = array();
 $valid = 0;
 foreach($samples as $line)
