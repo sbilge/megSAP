@@ -27,45 +27,45 @@ zcat 00-All.vcf.gz | php $src/Tools/db_converter_dbsnp.php | $vcflib/vcfbreakmul
 tabix -p vcf dbsnp_b150.vcf.gz
 rm -rf 00-All.vcf.gz
 
-#Install REPEATMASKER - http://www.repeatmasker.org/species/hg.html
-cd $dbs
-mkdir RepeatMasker
-cd RepeatMasker
-wget -O - http://www.repeatmasker.org/genomes/hg19/RepeatMasker-rm405-db20140131/hg19.fa.out.gz | gunzip > hg19.fa.out
-perl $tools/RepeatMasker/util/rmOutToGFF3.pl hg19.fa.out > RepeatMasker.gff
-cat RepeatMasker.gff | php $src/Tools/db_converter_repeatmasker.php | $ngsbits/BedSort > RepeatMasker.bed
-rm -rf hg19.fa.out RepeatMasker.gff
+##Install REPEATMASKER - http://www.repeatmasker.org/species/hg.html
+#cd $dbs
+#mkdir RepeatMasker
+#cd RepeatMasker
+#wget -O - http://www.repeatmasker.org/genomes/hg19/RepeatMasker-rm405-db20140131/hg19.fa.out.gz | gunzip > hg19.fa.out
+#perl $tools/RepeatMasker/util/rmOutToGFF3.pl hg19.fa.out > RepeatMasker.gff
+#cat RepeatMasker.gff | php $src/Tools/db_converter_repeatmasker.php | $ngsbits/BedSort > RepeatMasker.bed
+#rm -rf hg19.fa.out RepeatMasker.gff
 
-#Install dbNSFP - https://sites.google.com/site/jpopgen/dbNSFP
-cd $dbs
-mkdir dbNSFP
-cd dbNSFP
-wget ftp://dbnsfp:dbnsfp@dbnsfp.softgenetics.com/dbNSFPv2.9.3.zip
-unzip dbNSFPv2.9.3.zip
-rm -rf dbNSFPv2.9.3.zip
-head -n 1 dbNSFP2.9.3_variant.chr1 > dbNSFPv2.9.3.txt
-cat dbNSFP2.9.3_variant.chr* | egrep -v "^#"  >> dbNSFPv2.9.3.txt
-rm -rf dbNSFP2.9_gene.complete* dbNSFP2.9.3_variant* try* search*
-bgzip dbNSFPv2.9.3.txt
-tabix -s 1 -b 2 -e 2 dbNSFPv2.9.3.txt.gz
+##Install dbNSFP - https://sites.google.com/site/jpopgen/dbNSFP
+#cd $dbs
+#mkdir dbNSFP
+#cd dbNSFP
+#wget ftp://dbnsfp:dbnsfp@dbnsfp.softgenetics.com/dbNSFPv2.9.3.zip
+#unzip dbNSFPv2.9.3.zip
+#rm -rf dbNSFPv2.9.3.zip
+#head -n 1 dbNSFP2.9.3_variant.chr1 > dbNSFPv2.9.3.txt
+#cat dbNSFP2.9.3_variant.chr* | egrep -v "^#"  >> dbNSFPv2.9.3.txt
+#rm -rf dbNSFP2.9_gene.complete* dbNSFP2.9.3_variant* try* search*
+#bgzip dbNSFPv2.9.3.txt
+#tabix -s 1 -b 2 -e 2 dbNSFPv2.9.3.txt.gz
 
-#Install 1000G - http://www.internationalgenome.org/data
-cd $dbs
-mkdir 1000G
-cd 1000G
-wget ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf.gz
-zcat ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf.gz | $vcflib/vcfbreakmulti | $ngsbits/VcfLeftNormalize -ref $genome | $ngsbits/VcfStreamSort | bgzip > 1000g_v5b.vcf.gz
-tabix -p vcf 1000g_v5b.vcf.gz
-rm -rf ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf.gz
+##Install 1000G - http://www.internationalgenome.org/data
+#cd $dbs
+#mkdir 1000G
+#cd 1000G
+#wget ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf.gz
+#zcat ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf.gz | $vcflib/vcfbreakmulti | $ngsbits/VcfLeftNormalize -ref $genome | $ngsbits/VcfStreamSort | bgzip > 1000g_v5b.vcf.gz
+#tabix -p vcf 1000g_v5b.vcf.gz
+#rm -rf ALL.wgs.phase3_shapeit2_mvncall_integrated_v5b.20130502.sites.vcf.gz
 
-#Install ExAC - http://exac.broadinstitute.org/
-cd $dbs
-mkdir ExAC
-cd ExAC
-wget ftp://ftp.broadinstitute.org/pub/ExAC_release/release0.3.1/ExAC.r0.3.1.sites.vep.vcf.gz
-zcat ExAC.r0.3.1.sites.vep.vcf.gz | $vcflib/vcfbreakmulti | $ngsbits/VcfLeftNormalize -ref $genome | $ngsbits/VcfStreamSort | php $src/Tools/db_converter_exac.php | bgzip > ExAC_r0.3.1.vcf.gz
-tabix -p vcf ExAC_r0.3.1.vcf.gz
-rm -rf ExAC.r0.3.1.sites.vep.vcf.gz
+##Install ExAC - http://exac.broadinstitute.org/
+#cd $dbs
+#mkdir ExAC
+#cd ExAC
+#wget ftp://ftp.broadinstitute.org/pub/ExAC_release/release0.3.1/ExAC.r0.3.1.sites.vep.vcf.gz
+#zcat ExAC.r0.3.1.sites.vep.vcf.gz | $vcflib/vcfbreakmulti | $ngsbits/VcfLeftNormalize -ref $genome | $ngsbits/VcfStreamSort | php $src/Tools/db_converter_exac.php | bgzip > ExAC_r0.3.1.vcf.gz
+#tabix -p vcf ExAC_r0.3.1.vcf.gz
+#rm -rf ExAC.r0.3.1.sites.vep.vcf.gz
 
 #Install CLINVAR - https://www.ncbi.nlm.nih.gov/clinvar/
 cd $dbs
